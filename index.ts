@@ -1,7 +1,9 @@
 import ip from 'ip';
+import { readFileSync } from 'fs';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RateLimiter } from './rate_limit.js';
+
 
 interface ConnectionState {
   addr: string,
@@ -19,6 +21,9 @@ const connectedUsers = new Set();
 const roomUsers : Record<string, Set<string>> = {}; // Usernames in each room
 const roomCons : Record<string, WebSocket[]> = {}; // WS connections in each room
 const rateLimiter = new RateLimiter(10, 60 * 1000, 5);
+
+const reservedNicks = new Map<string, string>();
+const inverseReservedNicks = new Set<string>();
 
 /**
  * If the remote address is an IPv6 address, return the /64 it's a part of; otherwise return the whole address.
@@ -68,8 +73,22 @@ function arrayDel(ary: unknown[], itm: unknown) {
 /** Called when we receive a message of type: nick from the client */
 function handleNick(state: ConnectionState, { nick }: { nick: string }) {
   const { conn } = state;
+  const sentNick = nick;
 
   nick = nick.trim();
+
+  // Don't let people use a reserved nick without the secret key.
+  if (inverseReservedNicks.has(nick)) {
+    conn.send(JSON.stringify(
+      { type: 'error', error: 'nick_reserved' }
+    ));
+    return;
+  }
+
+  // Replace the secret key with the actual nick.
+  if (reservedNicks.has(nick)) {
+    nick = reservedNicks.get(nick)!;
+  }
 
   // Nick is too short or too long.
   if (nick.length < 1 || nick.length > 16) {
@@ -98,8 +117,10 @@ function handleNick(state: ConnectionState, { nick }: { nick: string }) {
   broadcast({ type: 'nick', prev_nick: state.username, nick: nick });
 
   state.username = nick;
+  
+  // Confirm their nick choice.
   conn.send(JSON.stringify(
-    { type: 'nick', nick: state.username }
+    { type: 'nick', nick: sentNick }
   ));
 }
 
@@ -187,6 +208,17 @@ function handleChat(state: ConnectionState, { body }: { body: string }) {
   broadcastToRoom(room, { type: 'chat', nick: username, body });
 }
 
+function loadReservedNicks() {
+  const data = JSON.parse(
+    readFileSync('reserved_nicks.json').toString()
+  );
+
+  for (const key in data) {
+    reservedNicks.set(key, data[key]);
+    inverseReservedNicks.add(data[key]);
+  }
+}
+
 wss.on('connection', (conn, req) => {
   let addr;
 
@@ -251,6 +283,8 @@ wss.on('connection', (conn, req) => {
 });
 
 const PORT = 8080;
+
+loadReservedNicks();
 
 server.listen(PORT);
 console.log(`Chat server listening on ${PORT}.`);
