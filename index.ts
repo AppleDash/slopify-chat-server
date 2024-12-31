@@ -18,8 +18,7 @@ const wss = new WebSocketServer({ server });
 
 /* State variables */
 const connectedUsers = new Set();
-const roomUsers : Record<string, Set<string>> = {}; // Usernames in each room
-const roomCons : Record<string, WebSocket[]> = {}; // WS connections in each room
+const roomUsers = new Map<string, ConnectionState[]>(); // Map of room names to array of connections/users in them.
 const rateLimiter = new RateLimiter(10, 60 * 1000, 5);
 
 const reservedNicks = new Map<string, string>();
@@ -57,12 +56,14 @@ function broadcast(message: unknown) {
 }
 
 function broadcastToRoom(room: string, message: unknown) {
-  for (const conn of roomCons[room]) {
-    conn.send(JSON.stringify(message));
+  const conns = roomUsers.get(room) ?? [];
+
+  for (const state of conns) {
+    state.conn.send(JSON.stringify(message));
   }
 }
 
-function arrayDel(ary: unknown[], itm: unknown) {
+function arrayDel<T>(ary: T[], itm: T) {
   const idx = ary.indexOf(itm);
 
   if (idx !== -1) {
@@ -117,7 +118,7 @@ function handleNick(state: ConnectionState, { nick }: { nick: string }) {
   broadcast({ type: 'nick', prev_nick: state.username, nick: nick });
 
   state.username = nick;
-  
+
   // Confirm their nick choice.
   conn.send(JSON.stringify(
     { type: 'nick', nick: sentNick }
@@ -152,8 +153,11 @@ function handleRoom(state: ConnectionState, { room }: { room: string }) {
 
   // Leave the current room
   if (state.room) {
-    roomUsers[state.room].delete(username);
-    arrayDel(roomCons[state.room], conn);
+    const states = roomUsers.get(state.room);
+
+    if (states) {
+      arrayDel(states, state);
+    }
   }
 
   console.log(`${username} switched from room ${state.room} to ${room}.`);
@@ -161,13 +165,13 @@ function handleRoom(state: ConnectionState, { room }: { room: string }) {
   state.room = room;
 
   // Join the room :-)
-  if (!(room in roomUsers)) {
-    roomUsers[room] = new Set();
-    roomCons[room] = [];
-  }
+  const states = roomUsers.get(room);
 
-  roomUsers[room].add(username);
-  roomCons[room].push(conn);
+  if (states) {
+    states.push(state);
+  } else {
+    roomUsers.set(room, [state]);
+  }
 }
 
 function handleChat(state: ConnectionState, { body }: { body: string }) {
@@ -273,8 +277,11 @@ wss.on('connection', (conn, req) => {
       connectedUsers.delete(username);
 
       if (room) {
-        roomUsers[room].delete(username);
-        arrayDel(roomCons[room], conn);
+        const states = roomUsers.get(room);
+
+        if (states) {
+          arrayDel(states, state);
+        }
       }
 
       console.log(`${username} disconnected.`);
