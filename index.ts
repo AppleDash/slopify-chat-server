@@ -6,10 +6,10 @@ import { RateLimiter } from './rate_limit.js';
 
 
 interface ConnectionState {
-  addr: string,
-  conn: WebSocket,
-  username?: string,
-  room?: string
+  addr: string,      // Remote IP address of the connection.
+  conn: WebSocket,   // The actual WebSocket representing the other endpoint.
+  username?: string, // The user's current username/nick.
+  room?: string      // The room the user is currently in.
 }
 
 /* The HTTP server and crap */
@@ -17,12 +17,13 @@ const server = createServer();
 const wss = new WebSocketServer({ server });
 
 /* State variables */
-const connectedUsers = new Set();
+const connectedUsers = new Set(); // Set of usernames of connected users.
 const roomUsers = new Map<string, ConnectionState[]>(); // Map of room names to array of connections/users in them.
 const rateLimiter = new RateLimiter(10, 60 * 1000, 5);
 
-const reservedNicks = new Map<string, string>();
-const inverseReservedNicks = new Set<string>();
+/* Reserved nick management */
+const secretKeyToNick = new Map<string, string>();
+const reservedNicks = new Set<string>();
 
 /**
  * If the remote address is an IPv6 address, return the /64 it's a part of; otherwise return the whole address.
@@ -79,7 +80,7 @@ function handleNick(state: ConnectionState, { nick }: { nick: string }) {
   nick = nick.trim();
 
   // Don't let people use a reserved nick without the secret key.
-  if (inverseReservedNicks.has(nick)) {
+  if (reservedNicks.has(nick)) {
     conn.send(JSON.stringify(
       { type: 'error', error: 'nick_reserved' }
     ));
@@ -87,8 +88,8 @@ function handleNick(state: ConnectionState, { nick }: { nick: string }) {
   }
 
   // Replace the secret key with the actual nick.
-  if (reservedNicks.has(nick)) {
-    nick = reservedNicks.get(nick)!;
+  if (secretKeyToNick.has(nick)) {
+    nick = secretKeyToNick.get(nick)!;
   }
 
   // Nick is too short or too long.
@@ -218,8 +219,8 @@ function loadReservedNicks() {
   );
 
   for (const key in data) {
-    reservedNicks.set(key, data[key]);
-    inverseReservedNicks.add(data[key]);
+    secretKeyToNick.set(key, data[key]);
+    reservedNicks.add(data[key]);
   }
 }
 
