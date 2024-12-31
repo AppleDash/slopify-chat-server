@@ -5,13 +5,19 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "tsx index.ts"
   },
   "keywords": [],
   "author": "AppleDash",
   "license": "MIT",
   "dependencies": {
     "ip": "^2.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ip": "^1.1.3",
+    "@types/ws": "^8.5.13"
   }
 }

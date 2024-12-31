@@ -1,20 +1,24 @@
 export class RateLimiter {
-  constructor(limit, timeWindow, burstAllowance) {
+  limit: number;
+  timeWindow: number;
+  burstAllowance: number;
+  requests: Map<string, number[]>;
+
+  constructor(limit: number, timeWindow: number, burstAllowance: number) {
     this.limit = limit; // Max requests per timeWindow
     this.timeWindow = timeWindow; // Time window in milliseconds
     this.burstAllowance = burstAllowance; // Extra burst requests allowed
     this.requests = new Map(); // Stores request data for each key
   }
 
-  hit(key) {
+  hit(key: string) {
     const now = Date.now();
-    
-    if (!this.requests.has(key)) {
+    const timestamps = this.requests.get(key);
+
+    if (!timestamps) {
       this.requests.set(key, []);
       return true;
     }
-
-    const timestamps = this.requests.get(key);
 
     while (timestamps.length > 0 && timestamps[0] <= now - this.timeWindow) {
       timestamps.shift();

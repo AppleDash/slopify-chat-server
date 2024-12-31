@@ -1,7 +1,13 @@
 import ip from 'ip';
 import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { RateLimiter } from './rate_limit.js';
+
+interface ConnectionState {
+  conn: WebSocket,
+  username?: string,
+  room?: string
+}
 
 /* The HTTP server and crap */
 const server = createServer();
@@ -9,11 +15,19 @@ const wss = new WebSocketServer({ server });
 
 /* State variables */
 const connectedUsers = new Set();
-const roomUsers = {}; // Usernames in each room
-const roomCons = {}; // WS connections in each room
+const roomUsers : Record<string, Set<string>> = {}; // Usernames in each room
+const roomCons : Record<string, WebSocket[]> = {}; // WS connections in each room
 const rateLimiter = new RateLimiter(10, 60 * 1000, 5);
 
-function getMaskedRemoteAddress(addr) {
+function getMaskedRemoteAddress(addr: string | string[] | undefined) {
+  if (!addr) {
+    throw new Error('Got a connection without a remote address, this should never happen.');
+  }
+
+  if (Array.isArray(addr)) {
+    addr = addr[0];
+  }
+
   console.log('Addr', addr);
   // v6 address, stick a /64 mask on
   if (ip.isV6Format(addr)) {
@@ -28,17 +42,17 @@ function getMaskedRemoteAddress(addr) {
   return addr;
 }
 
-function broadcast(message) {
+function broadcast(message: unknown) {
   wss.clients.forEach(client => client.send(JSON.stringify(message)));
 }
 
-function broadcastToRoom(room, message) {
+function broadcastToRoom(room: string, message: unknown) {
   for (const conn of roomCons[room]) {
     conn.send(JSON.stringify(message));
   }
 }
 
-function arrayDel(ary, itm) {
+function arrayDel(ary: unknown[], itm: unknown) {
   const idx = ary.indexOf(itm);
 
   if (idx !== -1) {
@@ -58,11 +72,13 @@ wss.on('connection', (conn, req) => {
 
   console.log('Accepting connection from', addr);
 
-  let username = null;
-  let currentRoom = null;
+  let state : ConnectionState = { conn };
 
-  conn.on('message', (msg) => {
-    msg = JSON.parse(msg.toString());
+  conn.on('message', (buffer) => {
+    const { username } = state;
+    const msg = JSON.parse(buffer.toString());
+    const currentRoom = state.room;
+
     console.log('Message', msg);
     // They want to change their nick.
     if (msg.type === 'nick') {
@@ -87,17 +103,17 @@ wss.on('connection', (conn, req) => {
       }
 
       // If they're changing their name from an existing one, get rid of the connected users.
-      if (username) {
-        connectedUsers.delete(username);
+      if (state.username) {
+        connectedUsers.delete(state.username);
       }
 
       connectedUsers.add(nick);
 
-      console.log(`User ${username} changed name to ${nick}`);
-      broadcast({ type: 'nick', prev_nick: username, nick: nick });
-      username = nick;
+      console.log(`User ${state.username} changed name to ${nick}`);
+      broadcast({ type: 'nick', prev_nick: state.username, nick: nick });
+      state.username = nick;
       conn.send(JSON.stringify(
-        { type: 'nick', nick: username }
+        { type: 'nick', nick: state.username }
       ));
 
     }
@@ -129,14 +145,14 @@ wss.on('connection', (conn, req) => {
       }
 
       // Leave the current room
-      if (currentRoom) {
-        roomUsers[currentRoom].delete(username);
-        arrayDel(roomCons[currentRoom], conn);
+      if (state.room) {
+        roomUsers[state.room].delete(username);
+        arrayDel(roomCons[state.room], conn);
       }
 
       console.log(`${username} switched from room ${currentRoom} to ${room}.`);
 
-      currentRoom = room;
+      state.room = room;
 
       // Join the room :-)
       if (!(room in roomUsers)) {
@@ -197,7 +213,9 @@ wss.on('connection', (conn, req) => {
   });
 
   conn.on('close', () => {
-    if (username !== null) {
+    const { username } = state;
+    const currentRoom = state.room;
+    if (username) {
       connectedUsers.delete(username);
 
       if (currentRoom) {
