@@ -20,6 +20,11 @@ const roomUsers : Record<string, Set<string>> = {}; // Usernames in each room
 const roomCons : Record<string, WebSocket[]> = {}; // WS connections in each room
 const rateLimiter = new RateLimiter(10, 60 * 1000, 5);
 
+/**
+ * If the remote address is an IPv6 address, return the /64 it's a part of; otherwise return the whole address.
+ * This is used for rate-limiting, because in the IPv6 world, each host gets a whole /64 and as such the entire /64
+ * should be treated as one address for rate-limiting or blocking purposes.
+ */
 function getMaskedRemoteAddress(addr: string | string[] | undefined) {
   if (!addr) {
     throw new Error('Got a connection without a remote address, this should never happen.');
@@ -82,7 +87,7 @@ function handleNick(state: ConnectionState, { nick }: { nick: string }) {
     return;
   }
 
-  // If they're changing their name from an existing one, get rid of the connected users.
+  // If they're changing their name from an existing one, get rid of the old connected user.
   if (state.username) {
     connectedUsers.delete(state.username);
   }
@@ -207,7 +212,7 @@ wss.on('connection', (conn, req) => {
 
     const msg = JSON.parse(buffer.toString());
 
-    console.log('Message', msg);
+    console.log(addr, 'Message', msg);
 
     // They want to change their nick.
     if (msg.type === 'nick') {
