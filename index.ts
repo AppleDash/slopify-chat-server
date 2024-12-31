@@ -179,14 +179,7 @@ function handleChat(state: ConnectionState, { body }: { body: string }) {
     return;
   }
 
-  // Rate limiting - returns true if request is allowed
-  if (rateLimiter.hit(addr)) {
-    broadcastToRoom(room, { type: 'chat', nick: username, body });
-  } else {
-    conn.send(JSON.stringify(
-      { type: 'error', error: 'rate_limited' }
-    ));
-  }
+  broadcastToRoom(room, { type: 'chat', nick: username, body });
 }
 
 wss.on('connection', (conn, req) => {
@@ -204,6 +197,14 @@ wss.on('connection', (conn, req) => {
   console.log('Accepting connection from', addr);
 
   conn.on('message', (buffer) => {
+    // Rate limiting - returns true if request is allowed
+    if (!rateLimiter.hit(addr)) {
+      conn.send(JSON.stringify(
+        { type: 'error', error: 'rate_limited' }
+      ));
+      return;
+    }
+
     const msg = JSON.parse(buffer.toString());
 
     console.log('Message', msg);
